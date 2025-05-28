@@ -1,11 +1,15 @@
-﻿using System;
-using Npgsql;
+using System;
+using GameHubConsole.Services;
+using GameHubConsole.Models;
 
 namespace GameHubConsole
 {
     class Program
     {
-        private static readonly string _connectionString = "Host=localhost;Username=postgres;Password=228;Database=Game-Home-Ha";
+        private static readonly UserService _userService = new UserService();
+        private static readonly GameService _gameService = new GameService();
+        private static readonly GameSessionService _sessionService = new GameSessionService();
+        private static readonly FriendService _friendService = new FriendService();
 
         static void Main()
         {
@@ -18,13 +22,15 @@ namespace GameHubConsole
                     Console.WriteLine("2. Просмотреть все игры");
                     Console.WriteLine("3. Добавить игровую сессию");
                     Console.WriteLine("4. Просмотреть друзей пользователя");
-                    Console.WriteLine("5. Выход");
+                    Console.WriteLine("5. Добавить друга");
+                    Console.WriteLine("6. Просмотреть игровые сессии пользователя");
+                    Console.WriteLine("7. Выход");
                     Console.Write("> ");
 
                     var input = Console.ReadLine();
-                    if (!int.TryParse(input, out int choice))
+                    if (!int.TryParse(input, out int choice) || choice < 1 || choice > 7)
                     {
-                        Console.WriteLine("Ошибка: введите число от 1 до 5");
+                        Console.WriteLine("Ошибка: введите число от 1 до 7");
                         continue;
                     }
 
@@ -43,6 +49,12 @@ namespace GameHubConsole
                             ViewFriends();
                             break;
                         case 5:
+                            AddFriend();
+                            break;
+                        case 6:
+                            ViewUserSessions();
+                            break;
+                        case 7:
                             return;
                         default:
                             Console.WriteLine("Неизвестная команда");
@@ -65,34 +77,17 @@ namespace GameHubConsole
             Console.Write("Введите пароль: ");
             var password = Console.ReadLine()!;
 
-            using var conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
-
-            using var cmd = new NpgsqlCommand(
-                "INSERT INTO Account (username, email) VALUES (@u, @e);" +
-                "INSERT INTO \"User\" (account_id, password) VALUES (currval(pg_get_serial_sequence('account', 'id')), @p)",
-                conn);
-
-            cmd.Parameters.AddWithValue("u", username);
-            cmd.Parameters.AddWithValue("e", email);
-            cmd.Parameters.AddWithValue("p", password);
-            cmd.ExecuteNonQuery();
-
+            _userService.AddUser(username, email, password);
             Console.WriteLine("Пользователь создан!");
         }
 
         static void ViewGames()
         {
-            using var conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
-
-            using var cmd = new NpgsqlCommand("SELECT id, title, genre FROM Game", conn);
-            using var reader = cmd.ExecuteReader();
-
+            var games = _gameService.GetAllGames();
             Console.WriteLine("\nСписок игр:");
-            while (reader.Read())
+            foreach (var game in games)
             {
-                Console.WriteLine($"[{reader.GetInt32(0)}] {reader.GetString(1)} ({reader.GetString(2)})");
+                Console.WriteLine($"[{game.Id}] {game.Title} ({game.Genre})");
             }
         }
 
@@ -107,19 +102,7 @@ namespace GameHubConsole
             Console.Write("Длительность (минуты): ");
             var duration = int.Parse(Console.ReadLine()!);
 
-            using var conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
-
-            using var cmd = new NpgsqlCommand(
-                "INSERT INTO GameSession (userid, gameid, StartTime, durationMinutes) " +
-                "VALUES (@u, @g, @s, @d)", conn);
-
-            cmd.Parameters.AddWithValue("u", userId);
-            cmd.Parameters.AddWithValue("g", gameId);
-            cmd.Parameters.AddWithValue("s", startTime);
-            cmd.Parameters.AddWithValue("d", duration);
-            cmd.ExecuteNonQuery();
-
+            _sessionService.AddGameSession(userId, gameId, startTime, duration);
             Console.WriteLine("Игровая сессия добавлена!");
         }
 
@@ -128,22 +111,35 @@ namespace GameHubConsole
             Console.Write("ID пользователя: ");
             var userId = int.Parse(Console.ReadLine()!);
 
-            using var conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
-
-            using var cmd = new NpgsqlCommand(
-                "SELECT u.id, a.username FROM FriendLink f " +
-                "JOIN \"User\" u ON f.friendid = u.id " +
-                "JOIN Account a ON u.account_id = a.id " +
-                "WHERE f.Userid = @id", conn);
-
-            cmd.Parameters.AddWithValue("id", userId);
-            using var reader = cmd.ExecuteReader();
-
+            var friends = _friendService.GetUserFriends(userId);
             Console.WriteLine("\nДрузья пользователя:");
-            while (reader.Read())
+            foreach (var friend in friends)
             {
-                Console.WriteLine($"[{reader.GetInt32(0)}] {reader.GetString(1)}");
+                Console.WriteLine($"[{friend.Id}] {friend.Username}");
+            }
+        }
+
+        static void AddFriend()
+        {
+            Console.Write("ID пользователя: ");
+            var userId = int.Parse(Console.ReadLine()!);
+            Console.Write("ID друга: ");
+            var friendId = int.Parse(Console.ReadLine()!);
+
+            _friendService.AddFriend(userId, friendId);
+            Console.WriteLine("Друг добавлен!");
+        }
+
+        static void ViewUserSessions()
+        {
+            Console.Write("ID пользователя: ");
+            var userId = int.Parse(Console.ReadLine()!);
+
+            var sessions = _sessionService.GetUserSessions(userId);
+            Console.WriteLine("\nИгровые сессии пользователя:");
+            foreach (var session in sessions)
+            {
+                Console.WriteLine($"Игра: {session.GameTitle}, Начало: {session.StartTime}, Длительность: {session.DurationMinutes} мин.");
             }
         }
     }
