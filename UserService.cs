@@ -1,100 +1,121 @@
 using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using GameHub.Models;
+using GameHub.Repositories;
+using GameHub.Validators;
+using GameHub.Exceptions;
 
-public class UserService
+namespace GameHub.Services
 {
-    private readonly UserRepository _userRepository;
-
-    public UserService(UserRepository userRepository)
+    public class UserService : IUserService
     {
-        _userRepository = userRepository;
-    }
+        private readonly IUserRepository _userRepository;
+        private readonly UserValidator _validator;
 
-    // Регистрация нового пользователя
-    public bool RegisterUser(string username, string email, string password)
-    {
-        // Проверка на существование пользователя с таким email или username
-        // Пока пропущено для простоты, предполагая уникальность на уровне БД
-
-        var newUser = new User
+        public UserService(IUserRepository userRepository)
         {
-            Username = username,
-            Email = email,
-            Password = password // В реальном приложении пароль должен быть хеширован
-        };
-
-        try
-        {
-            _userRepository.Create(newUser);
-            Console.WriteLine("Пользователь успешно зарегистрирован.");
-            return true;
+            _userRepository = userRepository;
+            _validator = new UserValidator();
         }
-        catch (DatabaseException ex)
+
+        public async Task<User> GetUserByIdAsync(int id)
         {
-            Console.WriteLine($"Ошибка регистрации: {ex.Message}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Произошла непредвиденная ошибка при регистрации: {ex.Message}");
-            return false;
-        }
-    }
-
-    // Вход пользователя
-    public User LoginUser(string email, string password)
-    {
-        // В реальном приложении здесь должна быть логика аутентификации
-        // (поиск пользователя по email и проверка хеша пароля)
-
-        // Пока упрощено: ищем пользователя по email (не реализовано в репозитории пока)
-        // и просто проверяем совпадение пароля.
-
-        // Для демонстрации, временно используем GetById (нужно будет изменить)
-        // В реальной ситуации потребуется метод GetByEmail в UserRepository
-        // Для текущей реализации, просто возвращаем пользователя, если пароль совпадает (неправильно для продакшена)
-
-        // Примечание: UserRepository.GetById сейчас ищет по id, а не email. 
-        // Этот метод нужно будет доработать или создать новый в UserRepository.
-
-        Console.WriteLine("Функция входа пока не полностью реализована.");
-        return null; // Временно
-
-        // Пример того, как это могло бы выглядеть (требует доработки UserRepository):
-        /*
-        try
-        {
-            var user = _userRepository.GetByEmail(email);
-            if (user != null && user.Password == password) // Проверка хеша пароля в реальном приложении
+            var user = await _userRepository.GetByIdAsync(id);
+            if (user == null)
             {
-                Console.WriteLine($"Вход выполнен успешно, {user.Username}!");
-                return user;
+                throw new NotFoundException($"Пользователь с ID {id} не найден");
             }
-            else
+            return user;
+        }
+
+        public async Task<IEnumerable<User>> GetAllUsersAsync()
+        {
+            return await _userRepository.GetAllAsync();
+        }
+
+        public async Task<User> CreateUserAsync(UserCreateDto userDto)
+        {
+            var validationResult = await _validator.ValidateAsync(userDto);
+            if (!validationResult.IsValid)
             {
-                Console.WriteLine("Неверный email или пароль.");
-                return null;
+                throw new ValidationException(validationResult.Errors);
             }
-        }
-        catch (DatabaseException ex)
-        {
-            Console.WriteLine($"Ошибка входа: {ex.Message}");
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Произошла непредвиденная ошибка при входе: {ex.Message}");
-            return null;
-        }
-        */
-    }
 
-    // Добавление друга
-    public bool AddFriend(User currentUser, User friendUser)
-    {
-        // Логика добавления связи дружбы в FriendLink таблице
-        // Требует реализации FriendLinkRepository и соответствующих методов
+            var user = new User
+            {
+                Username = userDto.Username,
+                Email = userDto.Email,
+                Password = HashPassword(userDto.Password),
+                CreatedAt = DateTime.UtcNow,
+                IsActive = true
+            };
 
-        Console.WriteLine("Функция добавления в друзья пока не реализована.");
-        return false;
+            return await _userRepository.AddAsync(user);
+        }
+
+        public async Task UpdateUserAsync(int id, UserUpdateDto userDto)
+        {
+            var user = await GetUserByIdAsync(id);
+            
+            if (!string.IsNullOrEmpty(userDto.Username))
+                user.Username = userDto.Username;
+            
+            if (!string.IsNullOrEmpty(userDto.Email))
+                user.Email = userDto.Email;
+            
+            if (!string.IsNullOrEmpty(userDto.Password))
+                user.Password = HashPassword(userDto.Password);
+
+            await _userRepository.UpdateAsync(user);
+        }
+
+        public async Task DeleteUserAsync(int id)
+        {
+            await _userRepository.DeleteAsync(id);
+        }
+
+        public async Task<IEnumerable<GameSession>> GetUserSessionsAsync(int userId)
+        {
+            var user = await GetUserByIdAsync(userId);
+            return await _userRepository.GetUserSessionsAsync(userId);
+        }
+
+        public async Task<IEnumerable<Friend>> GetUserFriendsAsync(int userId)
+        {
+            var user = await GetUserByIdAsync(userId);
+            return await _userRepository.GetUserFriendsAsync(userId);
+        }
+
+        public async Task AddFriendAsync(int userId, int friendId)
+        {
+            var user = await GetUserByIdAsync(userId);
+            var friend = await GetUserByIdAsync(friendId);
+            
+            if (await _userRepository.IsFriendAsync(userId, friendId))
+            {
+                throw new ValidationException("Пользователи уже являются друзьями");
+            }
+
+            await _userRepository.AddFriendAsync(userId, friendId);
+        }
+
+        public async Task RemoveFriendAsync(int userId, int friendId)
+        {
+            var user = await GetUserByIdAsync(userId);
+            var friend = await GetUserByIdAsync(friendId);
+            
+            if (!await _userRepository.IsFriendAsync(userId, friendId))
+            {
+                throw new ValidationException("Пользователи не являются друзьями");
+            }
+
+            await _userRepository.RemoveFriendAsync(userId, friendId);
+        }
+
+        private string HashPassword(string password)
+        {
+            return BCrypt.Net.BCrypt.HashPassword(password);
+        }
     }
-} 
+}
